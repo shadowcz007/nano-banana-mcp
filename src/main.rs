@@ -86,19 +86,48 @@ struct OpenRouterServer {
 
 #[tool_router]
 impl OpenRouterServer {
-	fn new() -> Result<Self> {
+	fn new(save_directory: Option<String>) -> Result<Self> {
 		let config = OpenRouterConfig::from_env()?;
 		let client = reqwest::Client::builder()
 			.default_headers(config.get_headers())
 			.build()?;
 		
-		// 获取当前工作目录并创建默认的 images 文件夹
-		let current_dir = std::env::current_dir()?;
-		let default_save_dir = current_dir.join("images");
+		// 确定保存目录：优先使用命令行参数，然后是环境变量，最后是默认值
+		let save_dir = if let Some(cmd_save_dir) = save_directory {
+			// 验证命令行提供的路径
+			let path = std::path::Path::new(&cmd_save_dir);
+			if !path.is_absolute() {
+				return Err(anyhow::anyhow!("命令行参数 --save-directory 必须是绝对路径，当前提供: {}", cmd_save_dir));
+			}
+			cmd_save_dir
+		} else if let Ok(env_save_dir) = std::env::var("MCP_SAVE_DIRECTORY") {
+			// 检查环境变量
+			let path = std::path::Path::new(&env_save_dir);
+			if !path.is_absolute() {
+				return Err(anyhow::anyhow!("环境变量 MCP_SAVE_DIRECTORY 必须是绝对路径，当前设置: {}", env_save_dir));
+			}
+			env_save_dir
+		} else {
+			// 获取当前工作目录并创建默认的 images 文件夹
+			let current_dir = std::env::current_dir()?;
+			let default_save_dir = current_dir.join("images");
+			
+			// 如果目录不存在，创建它
+			if !default_save_dir.exists() {
+				std::fs::create_dir_all(&default_save_dir)?;
+			}
+			
+			default_save_dir.to_string_lossy().to_string()
+		};
 		
-		// 如果目录不存在，创建它
-		if !default_save_dir.exists() {
-			std::fs::create_dir_all(&default_save_dir)?;
+		// 确保保存目录存在且可写
+		let path = std::path::Path::new(&save_dir);
+		if !path.exists() {
+			std::fs::create_dir_all(path)?;
+		}
+		
+		if !path.is_dir() {
+			return Err(anyhow::anyhow!("保存目录路径 '{}' 不是一个有效的目录", save_dir));
 		}
 		
 		Ok(Self {
@@ -106,12 +135,12 @@ impl OpenRouterServer {
 			config,
 			client,
 			current_model: std::sync::Arc::new(tokio::sync::RwLock::new("google/gemini-2.5-flash-image-preview:free".to_string())),
-			save_directory: std::sync::Arc::new(tokio::sync::RwLock::new(default_save_dir.to_string_lossy().to_string())),
+			save_directory: std::sync::Arc::new(tokio::sync::RwLock::new(save_dir)),
 		})
 	}
 
  
-	#[tool(description = "使用 OpenRouter 图像模型生成图像。支持可选的图像输入，图像可以是：1) URL链接 2) base64编码数据 3) 本地文件路径")]
+	#[tool(description = "文本生成图像")]
 	async fn generate_image(&self, Parameters(args): Parameters<GenerateImageArgs>) -> Result<CallToolResult, McpError> {
 		let url = format!("{}/chat/completions", self.config.base_url);
 		// 使用当前设置的模型
@@ -206,6 +235,14 @@ impl OpenRouterServer {
 
 	#[tool(description = "使用图像模型编辑或分析图像（支持多张图像）。图像可以是：1) URL链接 2) base64编码数据 3) 本地文件路径")]
 	async fn edit_image(&self, Parameters(args): Parameters<EditImageArgs>) -> Result<CallToolResult, McpError> {
+		// 验证是否传入了图片
+		if args.images.is_empty() {
+			return Err(McpError::internal_error(
+				"❌ 编辑图像时必须传入至少一张图片！\n\n请提供以下格式之一的图片：\n- URL链接 (http:// 或 https://)\n- base64编码数据 (data:image/...)\n- 本地文件路径\n\n示例：\n- URL: https://example.com/image.jpg\n- 本地文件: C:\\Images\\photo.png\n- base64: data:image/jpeg;base64,/9j/4AAQ...", 
+				None
+			));
+		}
+
 		let url = format!("{}/chat/completions", self.config.base_url);
 		// 使用当前设置的模型
 		let model = {
@@ -213,79 +250,79 @@ impl OpenRouterServer {
 			current.clone()
 		};
 		
-			// 构建包含文本指令和图像的内容数组
-	let mut content = vec![json!({
-		"type": "text",
-		"text": args.instruction
-	})];
-	
-	// 处理每个图像输入，支持多种格式
-	for image_input in &args.images {
-		// 首先尝试直接处理图像输入
-		match image_utils::detect_and_process_image_input(image_input) {
-			Ok(image_content) => {
-				match image_content.content_type.as_str() {
-					"url" => {
-						// URL 格式，直接使用
-						content.push(json!({
-							"type": "image_url",
-							"image_url": {
-								"url": image_content.data
-							}
-						}));
-					}
-					"base64" => {
-						// base64 格式，直接使用
-						content.push(json!({
-							"type": "image_url",
-							"image_url": {
-								"url": image_content.data
-							}
-						}));
-					}
-					_ => {
-						// 其他格式，作为 base64 处理
-						content.push(json!({
-							"type": "image_url",
-							"image_url": {
-								"url": image_content.data
-							}
-						}));
+		// 构建包含文本指令和图像的内容数组
+		let mut content = vec![json!({
+			"type": "text",
+			"text": args.instruction
+		})];
+		
+		// 处理每个图像输入，支持多种格式
+		for image_input in &args.images {
+			// 首先尝试直接处理图像输入
+			match image_utils::detect_and_process_image_input(image_input) {
+				Ok(image_content) => {
+					match image_content.content_type.as_str() {
+						"url" => {
+							// URL 格式，直接使用
+							content.push(json!({
+								"type": "image_url",
+								"image_url": {
+									"url": image_content.data
+								}
+							}));
+						}
+						"base64" => {
+							// base64 格式，直接使用
+							content.push(json!({
+								"type": "image_url",
+								"image_url": {
+									"url": image_content.data
+								}
+							}));
+						}
+						_ => {
+							// 其他格式，作为 base64 处理
+							content.push(json!({
+								"type": "image_url",
+								"image_url": {
+									"url": image_content.data
+								}
+							}));
+						}
 					}
 				}
-			}
-			Err(_) => {
-				// 如果直接处理失败，尝试在 save_directory 中查找
-				let current_save_dir = {
-					let save_dir = self.save_directory.read().await;
-					save_dir.clone()
-				};
-				
-				match image_utils::find_image_in_save_directory(image_input, &current_save_dir) {
-					Ok(image_content) => {
-						// 在 save_directory 中找到图片，转换为 base64 格式
-						content.push(json!({
-							"type": "image_url",
-							"image_url": {
-								"url": image_content.data
-							}
-						}));
-					}
-					Err(e) => {
-						// 在 save_directory 中也找不到，记录错误但继续处理其他图像
-						eprintln!("处理图像输入 '{}' 失败: {}", image_input, e);
-						// 尝试作为 URL 处理（保持向后兼容性）
-						content.push(json!({
-							"type": "image_url",
-							"image_url": {
-								"url": image_input
-							}
-						}));
+				Err(_) => {
+					// 如果直接处理失败，尝试在 save_directory 中查找
+					let current_save_dir = {
+						let save_dir = self.save_directory.read().await;
+						save_dir.clone()
+					};
+					
+					match image_utils::find_image_in_save_directory(image_input, &current_save_dir) {
+						Ok(image_content) => {
+							// 在 save_directory 中找到图片，转换为 base64 格式
+							content.push(json!({
+								"type": "image_url",
+								"image_url": {
+									"url": image_content.data
+								}
+							}));
+						}
+						Err(e) => {
+							// 在 save_directory 中也找不到，记录错误但继续处理其他图像
+							eprintln!("处理图像输入 '{}' 失败: {}", image_input, e);
+							// 尝试作为 URL 处理（保持向后兼容性）
+							content.push(json!({
+								"type": "image_url",
+								"image_url": {
+									"url": image_input
+								}
+							}));
+						}
 					}
 				}
 			}
 		}
-	}
 
 		let request_body = json!({
 			"model": model,
@@ -509,6 +546,11 @@ fn print_usage() {
 		println!("  {} -- --help                          # 显示此帮助信息", program_name);
 	}
 	println!();
+	println!("命令行参数:");
+	println!("  --api-key=KEY                             # 设置 OpenRouter API 密钥");
+	println!("  --save-directory=PATH                     # 设置图片保存目录 (必须是绝对路径)");
+	println!("  -s PATH                                   # --save-directory 的简写形式");
+	println!();
 	println!("API Key 设置 (选择一种方式):");
 	println!("  1. 环境变量: OPENROUTER_API_KEY=your_key");
 	println!("  2. 命令行参数: --api-key=your_key 或 --api-key your_key");
@@ -516,16 +558,25 @@ fn print_usage() {
 	println!("环境变量:");
 	println!("  OPENROUTER_API_KEY                           # OpenRouter API 密钥 (必须)");
 	println!("  MCP_HTTP_PORT                                # SSE 传输时的 HTTP 端口 (默认: 6621)");
+	println!("  MCP_SAVE_DIRECTORY                           # 图片保存目录 (必须是绝对路径)");
 	println!();
 	println!("示例:");
 	if is_release {
 		println!("  {} --api-key=sk-xxx...                   # 使用命令行参数设置 API key", program_name);
+		println!("  {} --save-directory=C:\\Images            # 设置图片保存目录", program_name);
+		println!("  {} --api-key=sk-xxx... --save-directory=C:\\Images  # 同时设置两个参数", program_name);
 		println!("  {} sse --api-key=sk-xxx...               # SSE 模式 + 命令行 API key", program_name);
+		println!("  {} sse --save-directory=/home/user/images # SSE 模式 + 保存目录", program_name);
 		println!("  OPENROUTER_API_KEY=sk-xxx... {}          # 使用环境变量", program_name);
+		println!("  MCP_SAVE_DIRECTORY=C:\\Images {}          # 使用环境变量设置保存目录", program_name);
 	} else {
 		println!("  {} -- --api-key=sk-xxx...                # 使用命令行参数设置 API key", program_name);
+		println!("  {} -- --save-directory=C:\\Images         # 设置图片保存目录", program_name);
+		println!("  {} -- --api-key=sk-xxx... --save-directory=C:\\Images  # 同时设置两个参数", program_name);
 		println!("  {} -- sse --api-key=sk-xxx...            # SSE 模式 + 命令行 API key", program_name);
+		println!("  {} -- sse --save-directory=/home/user/images # SSE 模式 + 保存目录", program_name);
 		println!("  OPENROUTER_API_KEY=sk-xxx... {}          # 使用环境变量", program_name);
+		println!("  MCP_SAVE_DIRECTORY=C:\\Images {}          # 使用环境变量设置保存目录", program_name);
 	}
 }
 
@@ -545,8 +596,9 @@ async fn main() -> Result<()> {
 		return Ok(());
 	}
 
-	// 先解析传输方式，过滤掉 --api-key 相关参数
+	// 先解析传输方式，过滤掉 --api-key 和 --save-directory 相关参数
 	let mut transport_type = "stdio"; // 默认值
+	let mut save_directory: Option<String> = None;
 	let mut i = 1;
 	
 	while i < args.len() {
@@ -561,12 +613,23 @@ async fn main() -> Result<()> {
 			} else {
 				i += 1; // 跳过 --api-key=value
 			}
+		} else if arg == "--save-directory" || arg == "-s" {
+			// 处理 --save-directory 参数
+			if i + 1 < args.len() {
+				save_directory = Some(args[i + 1].clone());
+				i += 2; // 跳过 --save-directory 和它的值
+			} else {
+				eprintln!("错误: 缺少 --save-directory 的值");
+				println!();
+				print_usage();
+				std::process::exit(1);
+			}
 		} else {
 			i += 1;
 		}
 	}
 
-	let handler = OpenRouterServer::new()?;
+	let handler = OpenRouterServer::new(save_directory)?;
 
 	// 使用解析出的传输方式
 	match transport_type {
