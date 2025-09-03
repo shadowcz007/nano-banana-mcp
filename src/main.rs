@@ -27,43 +27,26 @@ use axum::serve;
 use tower_http::cors::{Any, CorsLayer};
 use axum::http::HeaderName;
 
-// 工具参数结构体
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ChatWithModelArgs {
-	pub model: String,
-	pub message: serde_json::Value,
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub max_tokens: Option<u32>,
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub temperature: Option<f32>,
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub system_prompt: Option<String>,
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub save_directory: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct CompareModelsArgs {
-	pub models: Vec<String>,
-	pub message: serde_json::Value,
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub max_tokens: Option<u32>,
-}
-
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GenerateImageArgs {
+	#[schemars(example = &"一只可爱的小猫穿着宇航服在月球上行走，科幻风格")]
 	pub prompt: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct EditImageArgs {
+	#[schemars(example = &"请将这张图片编辑成一张科幻风格的海报")]
 	pub instruction: String,
+	#[schemars(example = &"https://example.com/image.jpg")]
+	#[schemars(example = &"C:\\Images\\photo.png")]
+	#[schemars(example = &"data:image/jpeg;base64,/9j/4AAQ...")]
 	pub images: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SetModelArgs {
 	#[schemars(description = "要设置的模型名称，支持: google/gemini-2.5-flash-image-preview:free, google/gemini-2.5-flash-image-preview。如果为空或未提供，则返回当前设置的模型")]
+	#[schemars(example = &"google/gemini-2.5-flash-image-preview:free")]
 	#[serde(default)]
 	pub model: Option<String>,
 }
@@ -71,6 +54,8 @@ pub struct SetModelArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SetSaveDirectoryArgs {
 	#[schemars(description = "要设置的图片保存目录路径（必须是绝对路径）。如果为空或未提供，则返回当前设置的保存目录")]
+	#[schemars(example = &"C:\\Users\\YourName\\Pictures")]
+	#[schemars(example = &"/home/username/pictures")]
 	#[serde(default)]
 	pub save_directory: Option<String>,
 }
