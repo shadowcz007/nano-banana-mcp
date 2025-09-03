@@ -1,0 +1,30 @@
+[package]
+name = "nano-banana-mcp"
+version = "0.1.0"
+edition = "2021"
+description = "Nano Banana MCP Server - 提供 OpenRouter API 访问 google/gemini-2.5-flash-image 模型"
+authors = ["Assistant"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/example/nano-banana-mcp"
+keywords = ["mcp", "openrouter", "ai", "api", "server", "gemini", "image-generation"]
+categories = ["api-bindings", "web-programming::http-server"]
+
+[dependencies]
+rmcp = { version = "0.6.0", features = ["server", "transport-sse-server", "transport-io", "macros", "schemars"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio-util = "0.7"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+anyhow = "1"
+
+# 新增：SSE传输和HTTP服务器相关依赖
+axum = "0.8"
+tower-http = { version = "0.5", features = ["cors"] }
