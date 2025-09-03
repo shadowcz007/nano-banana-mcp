@@ -70,7 +70,7 @@ pub struct SetModelArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SetSaveDirectoryArgs {
-	#[schemars(description = "要设置的图片保存目录路径。如果为空或未提供，则返回当前设置的保存目录")]
+	#[schemars(description = "要设置的图片保存目录路径（必须是绝对路径）。如果为空或未提供，则返回当前设置的保存目录")]
 	#[serde(default)]
 	pub save_directory: Option<String>,
 }
@@ -419,12 +419,20 @@ impl OpenRouterServer {
 		}
 	}
 
-	#[tool(description = "设置或获取图片保存目录")]
+	#[tool(description = "设置或获取图片保存目录。注意：只接受绝对路径，不支持相对路径")]
 	async fn set_save_directory(&self, Parameters(args): Parameters<SetSaveDirectoryArgs>) -> Result<CallToolResult, McpError> {
 		match args.save_directory {
 			Some(new_directory) => {
 				// 验证目录路径是否有效
 				let path = std::path::Path::new(&new_directory);
+				
+				// 检查是否为绝对路径
+				if !path.is_absolute() {
+					return Err(McpError::internal_error(
+						format!("路径 '{}' 是相对路径。请提供绝对路径，例如：\n- Windows: C:\\Users\\YourName\\Pictures\n- Linux/Mac: /home/username/pictures", new_directory), 
+						None
+					));
+				}
 				
 				// 如果目录不存在，尝试创建它
 				if !path.exists() {
@@ -523,8 +531,11 @@ fn print_usage() {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+	// 改进tracing配置，参考示例代码
 	tracing_subscriber::fmt()
-		.with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+		.with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+		.with_writer(std::io::stderr)
+		.with_ansi(false)
 		.init();
 
 	let args: Vec<String> = env::args().collect();
@@ -534,15 +545,39 @@ async fn main() -> Result<()> {
 		return Ok(());
 	}
 
+	// 先解析传输方式，过滤掉 --api-key 相关参数
+	let mut transport_type = "stdio"; // 默认值
+	let mut i = 1;
+	
+	while i < args.len() {
+		let arg = &args[i];
+		if arg == "stdio" || arg == "sse" {
+			transport_type = arg;
+			break;
+		} else if arg.starts_with("--api-key") || arg == "--api-key" {
+			// 跳过 --api-key 参数
+			if arg == "--api-key" && i + 1 < args.len() {
+				i += 2; // 跳过 --api-key 和它的值
+			} else {
+				i += 1; // 跳过 --api-key=value
+			}
+		} else {
+			i += 1;
+		}
+	}
+
 	let handler = OpenRouterServer::new()?;
 
-	// 获取传输方式参数，默认为 stdio
-	let transport_type = args.get(1).map(|s| s.as_str()).unwrap_or("stdio");
-	
+	// 使用解析出的传输方式
 	match transport_type {
 		"stdio" => {
-			// 使用 stdio 传输
-			let service = handler.serve(stdio()).await?;
+			// 使用 stdio 传输，参考示例代码改进错误处理
+			tracing::info!("Starting MCP server with stdio transport");
+			
+			let service = handler.serve(stdio()).await.inspect_err(|e| {
+				tracing::error!("serving error: {:?}", e);
+			})?;
+			
 			tracing::info!("MCP server started with stdio transport");
 			service.waiting().await?;
 		}
