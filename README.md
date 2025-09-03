@@ -4,6 +4,8 @@
 
 一个轻量级的 Model Context Protocol (MCP) 服务器，提供 OpenRouter API 访问 google/gemini-2.5-flash-image 模型。
 
+更多可访问:[codenow](https://codenow.wiki)
+
 ## 功能特性
 
 - 🖼️ **图像生成**: 使用 AI 模型生成图像
