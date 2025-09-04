@@ -43,29 +43,13 @@ pub struct EditImageArgs {
 	pub images: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SetModelArgs {
-	#[schemars(description = "要设置的模型名称，支持: google/gemini-2.5-flash-image-preview:free, google/gemini-2.5-flash-image-preview。如果为空或未提供，则返回当前设置的模型")]
-	#[schemars(example = &"google/gemini-2.5-flash-image-preview:free")]
-	#[serde(default)]
-	pub model: Option<String>,
-}
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SetSaveDirectoryArgs {
-	#[schemars(description = "要设置的图片保存目录路径（必须是绝对路径）。如果为空或未提供，则返回当前设置的保存目录")]
-	#[schemars(example = &"C:\\Users\\YourName\\Pictures")]
-	#[schemars(example = &"/home/username/pictures")]
-	#[serde(default)]
-	pub save_directory: Option<String>,
-}
 
 #[derive(Clone)]
 struct OpenRouterServer {
 	tool_router: ToolRouter<Self>,
 	config: OpenRouterConfig,
 	client: reqwest::Client,
-	current_model: std::sync::Arc<tokio::sync::RwLock<String>>,
 	save_directory: std::sync::Arc<tokio::sync::RwLock<String>>,
 }
 
@@ -119,7 +103,6 @@ impl OpenRouterServer {
 			tool_router: Self::tool_router(),
 			config,
 			client,
-			current_model: std::sync::Arc::new(tokio::sync::RwLock::new("google/gemini-2.5-flash-image-preview:free".to_string())),
 			save_directory: std::sync::Arc::new(tokio::sync::RwLock::new(save_dir)),
 		})
 	}
@@ -128,11 +111,8 @@ impl OpenRouterServer {
 	#[tool(description = "文本生成图像")]
 	async fn generate_image(&self, Parameters(args): Parameters<GenerateImageArgs>) -> Result<CallToolResult, McpError> {
 		let url = format!("{}/chat/completions", self.config.base_url);
-		// 使用当前设置的模型
-		let model = {
-			let current = self.current_model.read().await;
-			current.clone()
-		};
+		// 使用配置中的模型
+		let model = self.config.model.clone();
 		
 		// 构建消息内容
 		let content = vec![json!({
@@ -264,11 +244,8 @@ impl OpenRouterServer {
 		}
 
 		let url = format!("{}/chat/completions", self.config.base_url);
-		// 使用当前设置的模型
-		let model = {
-			let current = self.current_model.read().await;
-			current.clone()
-		};
+		// 使用配置中的模型
+		let model = self.config.model.clone();
 		
 		// 构建包含文本指令和图像的内容数组
 		let mut content = vec![json!({
@@ -470,111 +447,14 @@ impl OpenRouterServer {
 		}
 	}
 
-	#[tool(description = "设置或获取当前使用的模型")]
-	async fn set_model(&self, Parameters(args): Parameters<SetModelArgs>) -> Result<CallToolResult, McpError> {
-		match args.model {
-			Some(new_model) => {
-				// 验证模型名称是否在支持的列表中
-				let supported_models = vec![
-					"google/gemini-2.5-flash-image-preview:free".to_string(),
-					"google/gemini-2.5-flash-image-preview".to_string(),
-				];
-				
-				if !supported_models.contains(&new_model) {
-					return Err(McpError::internal_error(
-						format!("不支持的模型: {}。支持的模型: {}", 
-							new_model, 
-							supported_models.join(", ")), 
-						None
-					));
-				}
-				
-				// 设置新模型
-				{
-					let mut current = self.current_model.write().await;
-					*current = new_model.clone();
-				}
-				
-				Ok(CallToolResult::success(vec![Content::text(format!(
-					"✅ 模型已成功设置为: **{}**", 
-					new_model
-				))]))
-			}
-			None => {
-				// 返回当前设置的模型
-				let current = self.current_model.read().await;
-				Ok(CallToolResult::success(vec![Content::text(format!(
-					"📋 当前设置的模型: **{}**", 
-					*current
-				))]))
-			}
-		}
-	}
 
-	#[tool(description = "设置或获取图片保存目录。注意：只接受绝对路径，不支持相对路径")]
-	async fn set_save_directory(&self, Parameters(args): Parameters<SetSaveDirectoryArgs>) -> Result<CallToolResult, McpError> {
-		match args.save_directory {
-			Some(new_directory) => {
-				// 验证目录路径是否有效
-				let path = std::path::Path::new(&new_directory);
-				
-				// 检查是否为绝对路径
-				if !path.is_absolute() {
-					return Err(McpError::internal_error(
-						format!("路径 '{}' 是相对路径。请提供绝对路径，例如：\n- Windows: C:\\Users\\YourName\\Pictures\n- Linux/Mac: /home/username/pictures", new_directory), 
-						None
-					));
-				}
-				
-				// 如果目录不存在，尝试创建它
-				if !path.exists() {
-					match std::fs::create_dir_all(path) {
-						Ok(_) => {},
-						Err(e) => {
-							return Err(McpError::internal_error(
-								format!("无法创建目录 '{}': {}", new_directory, e), 
-								None
-							));
-						}
-					}
-				}
-				
-				// 验证目录是否可写
-				if !path.is_dir() {
-					return Err(McpError::internal_error(
-						format!("'{}' 不是一个有效的目录", new_directory), 
-						None
-					));
-				}
-				
-				// 设置新保存目录
-				{
-					let mut current = self.save_directory.write().await;
-					*current = new_directory.clone();
-				}
-				
-				Ok(CallToolResult::success(vec![Content::text(format!(
-					"✅ 图片保存目录已成功设置为: **{}**", 
-					new_directory
-				))]))
-			}
-			None => {
-				// 返回当前设置的保存目录
-				let current = self.save_directory.read().await;
-				Ok(CallToolResult::success(vec![Content::text(format!(
-					"📁 当前设置的图片保存目录: **{}**", 
-					*current
-				))]))
-			}
-		}
-	}
 }
 
 #[tool_handler]
 impl ServerHandler for OpenRouterServer {
 	fn get_info(&self) -> ServerInfo {
 		ServerInfo {
-			instructions: Some("nano banana MCP - 提供 OpenRouter API 访问 google/gemini-2.5-flash-image模型。支持多种图像输入格式：URL、base64、本地文件路径。可用工具: generate_image, edit_image, set_model, set_save_directory".into()),
+			instructions: Some("nano banana MCP - 提供 OpenRouter API 访问 google/gemini-2.5-flash-image模型。支持多种图像输入格式：URL、base64、本地文件路径。可用工具: generate_image, edit_image。模型和保存目录只能通过命令行参数或环境变量设置。".into()),
 			capabilities: ServerCapabilities::builder()
 				.enable_tools()
 				.enable_resources()
@@ -603,6 +483,7 @@ fn print_usage() {
 	println!();
 	println!("命令行参数:");
 	println!("  --api-key=KEY                             # 设置 OpenRouter API 密钥");
+	println!("  --model=MODEL                             # 设置使用的模型");
 	println!("  --save-directory=PATH                     # 设置图片保存目录 (必须是绝对路径)");
 	println!("  -s PATH                                   # --save-directory 的简写形式");
 	println!();
@@ -612,25 +493,30 @@ fn print_usage() {
 	println!();
 	println!("环境变量:");
 	println!("  OPENROUTER_API_KEY                           # OpenRouter API 密钥 (必须)");
+	println!("  MCP_MODEL                                    # 使用的模型 (默认: google/gemini-2.5-flash-image-preview:free)");
 	println!("  MCP_HTTP_PORT                                # SSE 传输时的 HTTP 端口 (默认: 6621)");
 	println!("  MCP_SAVE_DIRECTORY                           # 图片保存目录 (必须是绝对路径)");
 	println!();
 	println!("示例:");
 	if is_release {
 		println!("  {} --api-key=sk-xxx...                   # 使用命令行参数设置 API key", program_name);
+		println!("  {} --model=google/gemini-2.5-flash-image-preview  # 设置模型", program_name);
 		println!("  {} --save-directory=C:\\Images            # 设置图片保存目录", program_name);
-		println!("  {} --api-key=sk-xxx... --save-directory=C:\\Images  # 同时设置两个参数", program_name);
+		println!("  {} --api-key=sk-xxx... --model=google/gemini-2.5-flash-image-preview --save-directory=C:\\Images  # 同时设置所有参数", program_name);
 		println!("  {} sse --api-key=sk-xxx...               # SSE 模式 + 命令行 API key", program_name);
 		println!("  {} sse --save-directory=/home/user/images # SSE 模式 + 保存目录", program_name);
 		println!("  OPENROUTER_API_KEY=sk-xxx... {}          # 使用环境变量", program_name);
+		println!("  MCP_MODEL=google/gemini-2.5-flash-image-preview {}  # 使用环境变量设置模型", program_name);
 		println!("  MCP_SAVE_DIRECTORY=C:\\Images {}          # 使用环境变量设置保存目录", program_name);
 	} else {
 		println!("  {} -- --api-key=sk-xxx...                # 使用命令行参数设置 API key", program_name);
+		println!("  {} -- --model=google/gemini-2.5-flash-image-preview  # 设置模型", program_name);
 		println!("  {} -- --save-directory=C:\\Images         # 设置图片保存目录", program_name);
-		println!("  {} -- --api-key=sk-xxx... --save-directory=C:\\Images  # 同时设置两个参数", program_name);
+		println!("  {} -- --api-key=sk-xxx... --model=google/gemini-2.5-flash-image-preview --save-directory=C:\\Images  # 同时设置所有参数", program_name);
 		println!("  {} -- sse --api-key=sk-xxx...            # SSE 模式 + 命令行 API key", program_name);
 		println!("  {} -- sse --save-directory=/home/user/images # SSE 模式 + 保存目录", program_name);
 		println!("  OPENROUTER_API_KEY=sk-xxx... {}          # 使用环境变量", program_name);
+		println!("  MCP_MODEL=google/gemini-2.5-flash-image-preview {}  # 使用环境变量设置模型", program_name);
 		println!("  MCP_SAVE_DIRECTORY=C:\\Images {}          # 使用环境变量设置保存目录", program_name);
 	}
 }
@@ -651,7 +537,7 @@ async fn main() -> Result<()> {
 		return Ok(());
 	}
 
-	// 先解析传输方式，过滤掉 --api-key 和 --save-directory 相关参数
+	// 先解析传输方式，过滤掉 --api-key、--model 和 --save-directory 相关参数
 	let mut transport_type = "stdio"; // 默认值
 	let mut save_directory: Option<String> = None;
 	let mut i = 1;
@@ -667,6 +553,13 @@ async fn main() -> Result<()> {
 				i += 2; // 跳过 --api-key 和它的值
 			} else {
 				i += 1; // 跳过 --api-key=value
+			}
+		} else if arg.starts_with("--model") || arg == "--model" {
+			// 跳过 --model 参数
+			if arg == "--model" && i + 1 < args.len() {
+				i += 2; // 跳过 --model 和它的值
+			} else {
+				i += 1; // 跳过 --model=value
 			}
 		} else if arg == "--save-directory" || arg == "-s" {
 			// 处理 --save-directory 参数

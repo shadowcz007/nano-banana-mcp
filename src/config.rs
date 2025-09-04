@@ -9,6 +9,7 @@ pub struct OpenRouterConfig {
     pub http_referer: String,
     pub x_title: String,
     pub http_port: u16,
+    pub model: String,
 }
 
 impl OpenRouterConfig {
@@ -35,12 +36,30 @@ impl OpenRouterConfig {
             .parse()
             .unwrap_or(6621);
 
+        // 获取模型配置：优先命令行参数，然后环境变量，最后默认值
+        let model = Self::get_model_from_args(&args)
+            .or_else(|| env::var("MCP_MODEL").ok())
+            .unwrap_or_else(|| "google/gemini-2.5-flash-image-preview:free".to_string());
+
+        // 验证模型是否在支持的列表中
+        let supported_models = vec![
+            "google/gemini-2.5-flash-image-preview:free".to_string(),
+            "google/gemini-2.5-flash-image-preview".to_string(),
+        ];
+        
+        if !supported_models.contains(&model) {
+            return Err(anyhow!("不支持的模型: {}。支持的模型: {}", 
+                model, 
+                supported_models.join(", ")));
+        }
+
         Ok(Self {
             api_key,
             base_url,
             http_referer,
             x_title,
             http_port,
+            model,
         })
     }
 
@@ -52,6 +71,19 @@ impl OpenRouterConfig {
             }
             if arg.starts_with("--api-key=") {
                 return Some(arg.trim_start_matches("--api-key=").to_string());
+            }
+        }
+        None
+    }
+
+    /// 从命令行参数中获取模型
+    fn get_model_from_args(args: &[String]) -> Option<String> {
+        for (i, arg) in args.iter().enumerate() {
+            if arg == "--model" && i + 1 < args.len() {
+                return Some(args[i + 1].clone());
+            }
+            if arg.starts_with("--model=") {
+                return Some(arg.trim_start_matches("--model=").to_string());
             }
         }
         None
