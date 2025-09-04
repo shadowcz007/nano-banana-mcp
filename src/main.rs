@@ -154,13 +154,48 @@ impl OpenRouterServer {
 
 		match self.client.post(&url).json(&request_body).send().await {
 			Ok(response) => {
+				// 首先检查 HTTP 状态码
+				let status = response.status();
+				if !status.is_success() {
+					let error_text = response.text().await.unwrap_or_else(|_| "无法获取错误详情".to_string());
+					return Err(McpError::internal_error(
+						format!("API 请求失败，状态码: {}, 错误: {}", status, error_text), 
+						None
+					));
+				}
+
 				match response.json::<serde_json::Value>().await {
 					Ok(response_data) => {
-						let choice = response_data.get("choices")
-							.and_then(|c| c.as_array())
-							.and_then(|arr| arr.first())
-							.ok_or_else(|| McpError::internal_error("响应格式无效".to_string(), None))?;
+						// 添加调试信息，打印完整的响应
+						eprintln!("API 响应: {}", serde_json::to_string_pretty(&response_data).unwrap_or_else(|_| "无法序列化响应".to_string()));
 						
+						// 检查是否有错误字段
+						if let Some(error) = response_data.get("error") {
+							let error_message = error.get("message")
+								.and_then(|m| m.as_str())
+								.unwrap_or("未知错误");
+							return Err(McpError::internal_error(
+								format!("API 返回错误: {}", error_message), 
+								None
+							));
+						}
+
+						// 检查 choices 字段
+						let choices = response_data.get("choices")
+							.and_then(|c| c.as_array())
+							.ok_or_else(|| McpError::internal_error(
+								"API 响应中缺少 'choices' 字段或格式不正确".to_string(), 
+								None
+							))?;
+
+						if choices.is_empty() {
+							return Err(McpError::internal_error(
+								"API 响应中 'choices' 数组为空".to_string(), 
+								None
+							));
+						}
+
+						let choice = &choices[0];
 						let message = choice.get("message")
 							.ok_or_else(|| McpError::internal_error("消息格式无效".to_string(), None))?;
 						
@@ -321,13 +356,48 @@ impl OpenRouterServer {
 
 		match self.client.post(&url).json(&request_body).send().await {
 			Ok(response) => {
+				// 首先检查 HTTP 状态码
+				let status = response.status();
+				if !status.is_success() {
+					let error_text = response.text().await.unwrap_or_else(|_| "无法获取错误详情".to_string());
+					return Err(McpError::internal_error(
+						format!("API 请求失败，状态码: {}, 错误: {}", status, error_text), 
+						None
+					));
+				}
+
 				match response.json::<serde_json::Value>().await {
 					Ok(response_data) => {
-						let choice = response_data.get("choices")
-							.and_then(|c| c.as_array())
-							.and_then(|arr| arr.first())
-							.ok_or_else(|| McpError::internal_error("响应格式无效".to_string(), None))?;
+						// 添加调试信息，打印完整的响应
+						eprintln!("API 响应: {}", serde_json::to_string_pretty(&response_data).unwrap_or_else(|_| "无法序列化响应".to_string()));
 						
+						// 检查是否有错误字段
+						if let Some(error) = response_data.get("error") {
+							let error_message = error.get("message")
+								.and_then(|m| m.as_str())
+								.unwrap_or("未知错误");
+							return Err(McpError::internal_error(
+								format!("API 返回错误: {}", error_message), 
+								None
+							));
+						}
+
+						// 检查 choices 字段
+						let choices = response_data.get("choices")
+							.and_then(|c| c.as_array())
+							.ok_or_else(|| McpError::internal_error(
+								"API 响应中缺少 'choices' 字段或格式不正确".to_string(), 
+								None
+							))?;
+
+						if choices.is_empty() {
+							return Err(McpError::internal_error(
+								"API 响应中 'choices' 数组为空".to_string(), 
+								None
+							));
+						}
+
+						let choice = &choices[0];
 						let message = choice.get("message")
 							.ok_or_else(|| McpError::internal_error("消息格式无效".to_string(), None))?;
 						
