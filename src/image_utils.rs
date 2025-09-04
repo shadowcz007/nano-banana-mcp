@@ -287,5 +287,6 @@ fn detect_mime_type_from_path(file_path: &Path) -> Result<String> {
 pub struct ImageContent {
     pub content_type: String,  // "url", "base64", "file"
     pub data: String,          // 实际的数据内容
+    #[allow(dead_code)]
     pub mime_type: String,     // MIME 类型
 } 

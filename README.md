@@ -10,6 +10,8 @@
 
 更多可访问:[codenow](https://codenow.wiki)
 
+[胜算云-Key获取](https://www.shengsuanyun.com/?from=CH_X30T9465)
+
 ## 功能特性
 
 - 🖼️ **图像生成**: 使用 Google Gemini 2.5 Flash Image 模型生成高质量图像
